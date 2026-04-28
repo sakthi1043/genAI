@@ -101,6 +101,76 @@ function FlightCard({ flight }) {
   );
 }
 
+function TravelCard({ travel }) {
+  if (!travel || !travel.options || travel.options.length === 0) return null;
+  const cheapestPrice = Math.min(...travel.options.map(o => o.price_per_person_inr));
+  return (
+    <div style={{
+      background: "linear-gradient(135deg, #1A1814 0%, #2D2822 100%)",
+      borderRadius: 16,
+      padding: "22px 24px",
+      marginBottom: 24,
+      boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+      border: "1px solid rgba(184,115,51,0.2)",
+      color: "#fff",
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      <div style={{
+        position: "absolute", top: -30, right: -30,
+        width: 100, height: 100,
+        background: "rgba(184,115,51,0.06)", borderRadius: "50%",
+      }} />
+      <div style={{
+        fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase",
+        letterSpacing: "0.08em", color: "#B87333", marginBottom: 14,
+      }}>
+        ✈️ Travel: {travel.from} → {travel.to}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {travel.options.map((opt, i) => (
+          <div key={i} style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            padding: "12px 16px",
+            background: "rgba(255,255,255,0.04)",
+            borderRadius: 10,
+            border: opt.price_per_person_inr === cheapestPrice
+              ? "1px solid rgba(184,115,51,0.5)"
+              : "1px solid rgba(255,255,255,0.06)",
+          }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: "0.9rem", fontWeight: 700 }}>{opt.airline}</span>
+                {opt.price_per_person_inr === cheapestPrice && (
+                  <span style={{
+                    fontSize: "0.6rem", fontWeight: 700, textTransform: "uppercase",
+                    background: "#B87333", color: "#fff",
+                    padding: "2px 7px", borderRadius: 999, letterSpacing: "0.06em",
+                  }}>Best Price</span>
+                )}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                Duration: {opt.duration}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "1rem", fontWeight: 700, color: "#E8C99A" }}>
+                ₹{opt.price_per_person_inr.toLocaleString("en-IN")}
+                <span style={{ fontSize: "0.7rem", fontWeight: 400, color: "rgba(255,255,255,0.45)", marginLeft: 4 }}>/person</span>
+              </div>
+              {opt.total_price_inr > opt.price_per_person_inr && (
+                <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                  Total ₹{opt.total_price_inr.toLocaleString("en-IN")}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AccommodationCard({ accommodation }) {
   if (!accommodation || !accommodation.name) return null;
   return (
@@ -145,12 +215,10 @@ function AccommodationCard({ accommodation }) {
   );
 }
 
-function DayCard({ dayNum, title, activities }) {
+function DayCard({ dayNum, title, activities, food, stay, transport, dayTotal }) {
   const [expanded, setExpanded] = useState(false);
   const colors = ["#FF6B6B", "#4ECDC4", "#FFE66D", "#95E1D3", "#C7B3E5"];
-  const dayColor = colors[dayNum % colors.length];
-
-  const dayTotal = (activities || []).reduce((sum, a) => sum + (a.cost || 0), 0);
+  const dayColor = colors[(dayNum - 1) % colors.length];
 
   return (
     <div style={{ marginBottom: 16 }}>
@@ -179,19 +247,12 @@ function DayCard({ dayNum, title, activities }) {
       >
         <span>Day {dayNum}: {title}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ 
-            fontSize: "0.8rem", 
-            fontWeight: 600,
-            opacity: 0.9,
-            textTransform: "none",
-          }}>
-            {dayTotal > 0 ? `₹${dayTotal.toLocaleString("en-IN")}` : ""}
-          </span>
-          <span style={{ 
-            fontSize: "1.3rem", 
-            transition: "transform 0.3s ease", 
-            transform: expanded ? "rotate(180deg)" : "rotate(0deg)" 
-          }}>&#9660;</span>
+          {dayTotal > 0 && (
+            <span style={{ fontSize: "0.8rem", fontWeight: 600, opacity: 0.9, textTransform: "none" }}>
+              ₹{dayTotal.toLocaleString("en-IN")}
+            </span>
+          )}
+          <span style={{ fontSize: "1.3rem", transition: "transform 0.3s ease", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>&#9660;</span>
         </div>
       </button>
 
@@ -203,69 +264,94 @@ function DayCard({ dayNum, title, activities }) {
           borderBottomLeftRadius: 16,
           borderBottomRightRadius: 16,
           padding: "24px 20px",
-          marginTop: 0,
           boxShadow: `0 6px 16px ${dayColor}15`,
+          display: "flex",
+          flexDirection: "column",
+          gap: 20,
         }}>
-          {(activities || []).map((activity, i) => (
-            <div key={i} style={{ 
-              marginBottom: i < activities.length - 1 ? 20 : 0,
-              padding: "16px",
-              background: "#fff",
-              borderRadius: 12,
-              borderLeft: `4px solid ${dayColor}`,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
-              transition: "all 0.2s ease",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.boxShadow = `0 4px 12px ${dayColor}20`;
-              e.currentTarget.style.transform = "translateX(4px)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.03)";
-              e.currentTarget.style.transform = "translateX(0)";
-            }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                <div>
-                  <span style={{ 
-                    fontSize: "0.7rem", 
-                    fontWeight: 700, 
-                    textTransform: "uppercase",
-                    color: dayColor,
-                    letterSpacing: "0.05em"
-                  }}>
-                    {activity.timeSlot || ""}
+
+          {/* Activities */}
+          {(activities || []).length > 0 && (
+            <div>
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: dayColor, marginBottom: 10 }}>Activities</div>
+              {activities.map((act, i) => (
+                <div key={i} style={{
+                  marginBottom: i < activities.length - 1 ? 10 : 0,
+                  padding: "14px 16px",
+                  background: "#fff",
+                  borderRadius: 12,
+                  borderLeft: `4px solid ${dayColor}`,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+                  transition: "all 0.2s ease",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = "translateX(4px)"; e.currentTarget.style.boxShadow = `0 4px 12px ${dayColor}20`; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = "translateX(0)"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.03)"; }}
+                >
+                  <div>
+                    <div style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", color: dayColor, letterSpacing: "0.05em", marginBottom: 3 }}>{act.time}</div>
+                    <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "#1A1814" }}>{act.activity}</div>
+                  </div>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#B87333", whiteSpace: "nowrap", marginLeft: 12 }}>
+                    {act.cost_inr > 0 ? `₹${act.cost_inr.toLocaleString("en-IN")}` : "Free"}
                   </span>
-                  {activity.time && (
-                    <span style={{ fontSize: "0.72rem", color: "#8C887F", marginLeft: 8 }}>
-                      {activity.time}
-                    </span>
-                  )}
                 </div>
-                <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#B87333" }}>
-                  {typeof activity.cost === "number" ? `₹${activity.cost.toLocaleString("en-IN")}` : `₹${activity.cost || 0}`}
-                </span>
-              </div>
-              <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "#1A1814", marginBottom: 4 }}>
-                {activity.activity || activity.place || "Activity"}
-              </div>
-              {activity.place && activity.activity && (
-                <div style={{ fontSize: "0.78rem", color: "#5A5650", marginBottom: 4 }}>
-                  {activity.place}
-                </div>
-              )}
-              {activity.meal && (
-                <div style={{ fontSize: "0.78rem", color: "#5A5650", marginBottom: 4 }}>
-                  {activity.meal}
-                </div>
-              )}
-              {activity.details && (
-                <div style={{ fontSize: "0.78rem", color: "#8C887F", lineHeight: 1.5 }}>
-                  {activity.details}
-                </div>
-              )}
+              ))}
             </div>
-          ))}
+          )}
+
+          {/* Food */}
+          {(food || []).length > 0 && (
+            <div>
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#FF6B6B", marginBottom: 10 }}>🍽 Meals</div>
+              {food.map((f, i) => (
+                <div key={i} style={{
+                  marginBottom: i < food.length - 1 ? 8 : 0,
+                  padding: "12px 16px",
+                  background: "#fff",
+                  borderRadius: 12,
+                  borderLeft: "4px solid #FF6B6B",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+                }}>
+                  <div>
+                    <div style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", color: "#FF6B6B", letterSpacing: "0.05em", marginBottom: 3 }}>{f.meal}</div>
+                    <div style={{ fontSize: "0.85rem", color: "#1A1814" }}>{f.description}</div>
+                  </div>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#B87333", whiteSpace: "nowrap", marginLeft: 12 }}>
+                    {f.cost_inr > 0 ? `₹${f.cost_inr.toLocaleString("en-IN")}` : "~Incl."}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Stay & Transport */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {stay && stay.name && (
+              <div style={{ padding: "14px 16px", background: "#fff", borderRadius: 12, borderLeft: "4px solid #4ECDC4", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+                <div style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", color: "#4ECDC4", letterSpacing: "0.05em", marginBottom: 4 }}>🏨 Stay</div>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#1A1814", marginBottom: 2 }}>{stay.name}</div>
+                <div style={{ fontSize: "0.75rem", color: "#8C887F" }}>{stay.type}</div>
+                {stay.cost_per_night_inr > 0 && (
+                  <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#B87333", marginTop: 4 }}>₹{stay.cost_per_night_inr.toLocaleString("en-IN")}/night</div>
+                )}
+              </div>
+            )}
+            {transport && transport.mode && (
+              <div style={{ padding: "14px 16px", background: "#fff", borderRadius: 12, borderLeft: "4px solid #A8D8EA", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+                <div style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", color: "#4A9CC7", letterSpacing: "0.05em", marginBottom: 4 }}>🚌 Transport</div>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#1A1814", marginBottom: 2 }}>{transport.mode}</div>
+                {transport.cost_inr > 0 && (
+                  <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#B87333", marginTop: 4 }}>₹{transport.cost_inr.toLocaleString("en-IN")}</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -406,13 +492,18 @@ function TipsSection({ tips }) {
 }
 
 function ItineraryDisplay({ data }) {
-  // data is the parsed JSON object from the backend
-  const tripDetails = data.tripDetails || {};
-  const flight = data.flight || {};
-  const accommodation = data.accommodation || {};
-  const days = data.days || [];
-  const budget = data.budget || {};
+  // data matches the backend schema:
+  // { destination, duration_days, total_budget_inr, travelers, trip_plan[], tips[] }
+  const destination = data.destination || "";
+  const durationDays = data.duration_days || (data.trip_plan || []).length;
+  const totalBudget = data.total_budget_inr || 0;
+  const travelers = data.travelers || 1;
+  const tripPlan = data.trip_plan || [];
   const tips = data.tips || [];
+
+  const dailyBudget = travelers > 0 && durationDays > 0
+    ? Math.round(totalBudget / travelers / durationDays)
+    : 0;
 
   return (
     <div style={{
@@ -425,9 +516,9 @@ function ItineraryDisplay({ data }) {
     }}>
       {/* Header */}
       <div style={{ marginBottom: 28 }}>
-        <div style={{ 
-          fontSize: "1.6rem", 
-          fontWeight: 800, 
+        <div style={{
+          fontSize: "1.6rem",
+          fontWeight: 800,
           background: "linear-gradient(135deg, #B87333 0%, #A85A1E 100%)",
           WebkitBackgroundClip: "text",
           WebkitTextFillColor: "transparent",
@@ -436,38 +527,28 @@ function ItineraryDisplay({ data }) {
         }}>
           Your Perfect Itinerary
         </div>
-        <div style={{ 
-          fontSize: "0.9rem", 
-          color: "#9B9490",
-          fontWeight: 500,
-          lineHeight: 1.6
-        }}>
-          {tripDetails.source && tripDetails.destination 
-            ? `${tripDetails.source} to ${tripDetails.destination} - ${tripDetails.days || days.length} days`
-            : "Personalized travel plan with activities, dining, and accommodations"}
+        <div style={{ fontSize: "0.9rem", color: "#9B9490", fontWeight: 500, lineHeight: 1.6 }}>
+          {destination ? `${destination} · ${durationDays} day${durationDays !== 1 ? "s" : ""}` : "Personalized travel plan"}
         </div>
       </div>
 
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 32 }}>
-        <StatCard label="Duration" value={tripDetails.days ? `${tripDetails.days} days` : `${days.length} days`} color="#FF6B6B" />
-        <StatCard label="Travelers" value={tripDetails.travelers || "N/A"} color="#4ECDC4" />
-        <StatCard label="Budget" value={tripDetails.totalBudget ? `₹${tripDetails.totalBudget.toLocaleString("en-IN")}` : "N/A"} color="#FFE66D" />
-        <StatCard label="Daily Budget" value={tripDetails.dailyBudget ? `₹${tripDetails.dailyBudget.toLocaleString("en-IN")}` : "N/A"} color="#95E1D3" />
+        <StatCard label="Destination" value={destination || "—"} color="#FF6B6B" />
+        <StatCard label="Duration" value={`${durationDays} day${durationDays !== 1 ? "s" : ""}`} color="#4ECDC4" />
+        <StatCard label="Travelers" value={travelers} color="#FFE66D" />
+        <StatCard label="Total Budget" value={totalBudget > 0 ? `₹${totalBudget.toLocaleString("en-IN")}` : "N/A"} color="#95E1D3" />
       </div>
 
-      {/* Flight */}
-      <FlightCard flight={flight} />
+      {/* Travel Card */}
+      <TravelCard travel={data.travel} />
 
-      {/* Accommodation */}
-      <AccommodationCard accommodation={accommodation} />
-
-      {/* Days Itinerary */}
-      <div style={{ marginTop: 32, marginBottom: 32 }}>
-        <div style={{ 
-          fontSize: "1.1rem", 
-          fontWeight: 700, 
-          color: "#1A1814", 
+      {/* Day by Day */}
+      <div style={{ marginBottom: 32 }}>
+        <div style={{
+          fontSize: "1.1rem",
+          fontWeight: 700,
+          color: "#1A1814",
           marginBottom: 18,
           display: "flex",
           alignItems: "center",
@@ -482,21 +563,40 @@ function ItineraryDisplay({ data }) {
             borderRadius: 999,
             fontWeight: 600
           }}>
-            {days.length} DAYS
+            {tripPlan.length} DAYS
           </span>
         </div>
-        {days.map((day, i) => (
-          <DayCard 
-            key={i} 
-            dayNum={day.dayNumber || i + 1} 
-            title={day.title || `Day ${i + 1}`} 
-            activities={day.activities || []} 
+        {tripPlan.map((day, i) => (
+          <DayCard
+            key={i}
+            dayNum={day.day || i + 1}
+            title={day.theme || `Day ${i + 1}`}
+            activities={day.activities || []}
+            food={day.food || []}
+            stay={day.stay || null}
+            transport={day.transport || null}
+            dayTotal={day.day_total_inr || 0}
           />
         ))}
       </div>
 
-      {/* Budget */}
-      <BudgetBreakdown budget={budget} />
+      {/* Per-person daily budget note */}
+      {dailyBudget > 0 && (
+        <div style={{
+          padding: "14px 20px",
+          background: "linear-gradient(135deg, #B87333 0%, #A85A1E 100%)",
+          borderRadius: 14,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 24,
+          color: "#fff",
+          boxShadow: "0 6px 20px rgba(184,115,51,0.2)",
+        }}>
+          <div style={{ fontSize: "0.9rem", opacity: 0.9, fontWeight: 600 }}>Est. Budget per person / day</div>
+          <div style={{ fontSize: "1.3rem", fontWeight: 800 }}>₹{dailyBudget.toLocaleString("en-IN")}</div>
+        </div>
+      )}
 
       {/* Tips */}
       <TipsSection tips={tips} />
@@ -715,15 +815,17 @@ export default function App() {
       const data = await res.json();
       
       const plan = data.plan;
-      
-      if (plan && plan.format === "json") {
-        // Structured JSON response - display as itinerary cards
-        addMsg("bot", "", plan);
-      } else if (plan && plan.format === "text") {
-        // Text fallback
-        addMsg("bot", plan.data || "Something went wrong. Please try again.");
+
+      if (plan && plan.error) {
+        // Backend returned an error object
+        addMsg("bot", plan.error || "Something went wrong. Please try again.");
+      } else if (plan && plan.trip_plan) {
+        // Structured backend response — wrap it so Message renders ItineraryDisplay
+        addMsg("bot", "", { format: "json", data: plan });
+      } else if (plan && plan.raw) {
+        // LLM returned non-parseable text
+        addMsg("bot", plan.raw);
       } else if (typeof plan === "string") {
-        // Legacy string response
         addMsg("bot", plan);
       } else {
         addMsg("bot", "Something went wrong. Please try again.");

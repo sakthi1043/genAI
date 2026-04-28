@@ -131,33 +131,78 @@ def get_flights(source: str, destination: str):
 
 def get_simulated_flights(source: str, destination: str):
     """
-    Realistic flight data generator as a reliable fallback
-    since most flight APIs have strict rate limits or are paid
+    Realistic flight data generator as a reliable fallback.
+    Detects domestic vs international routes and uses appropriate
+    airlines, price ranges, and durations.
     """
-    airlines = ["IndiGo", "Air India", "Vistara", "SpiceJet", "Akasa Air"]
-    
-    # Generate a plausible price based on domestic travel
-    base_price = random.randint(3500, 8500)
-    
-    # Plausible flight durations (1h 15m to 3h 30m)
-    duration_mins = random.randint(75, 210)
-    hours = duration_mins // 60
-    minutes = duration_mins % 60
-    duration_str = f"{hours}h {minutes}m"
-    
+
+    # ── Route classification ──────────────────────────────────────
+    INDIAN_CITIES = {
+        "mumbai", "delhi", "bangalore", "bengaluru", "hyderabad",
+        "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "goa",
+        "kochi", "cochin", "lucknow", "chandigarh", "surat",
+        "amritsar", "bhopal", "indore", "nagpur", "coimbatore",
+        "vizag", "visakhapatnam", "patna", "ranchi", "bhubaneswar",
+        "guwahati", "srinagar", "jammu", "leh", "varanasi", "agra",
+        "aurangabad", "udaipur", "jodhpur", "shimla", "manali",
+        "darjeeling", "kerala", "ooty", "mysore", "mysuru",
+    }
+    NEIGHBOUR_COUNTRIES = {
+        "sri lanka", "colombo", "nepal", "kathmandu", "bhutan",
+        "thimphu", "maldives", "male", "dhaka", "bangladesh",
+        "myanmar", "yangon", "kabul", "islamabad",
+    }
+
+    src_l  = source.lower().strip()
+    dest_l = destination.lower().strip()
+
+    def _is_indian(name: str) -> bool:
+        return any(c in name for c in INDIAN_CITIES)
+
+    def _is_neighbour(name: str) -> bool:
+        return any(n in name for n in NEIGHBOUR_COUNTRIES)
+
+    both_domestic = _is_indian(src_l) and _is_indian(dest_l)
+    is_neighbour  = _is_neighbour(dest_l)
+
+    # ── Airline + price + duration by route type ──────────────────
+    if both_domestic:
+        airlines = ["IndiGo", "Air India", "Vistara", "SpiceJet", "Akasa Air"]
+        base_price   = random.randint(3_500, 9_500)
+        var_price    = random.randint(-800, 2_000)
+        dur_min, dur_max = 60, 200          # 1h – 3h 20m
+
+    elif is_neighbour:
+        airlines = ["Air India", "IndiGo", "SriLankan Airlines", "Himalaya Airlines", "Maldivian"]
+        base_price   = random.randint(12_000, 35_000)
+        var_price    = random.randint(-2_000, 5_000)
+        dur_min, dur_max = 90, 300          # 1h 30m – 5h
+
+    else:
+        # Long-haul international
+        airlines = [
+            "Air India", "Emirates", "Etihad Airways", "Qatar Airways",
+            "Singapore Airlines", "Lufthansa", "Air France", "British Airways",
+            "Turkish Airlines", "KLM", "Swiss Air", "Cathay Pacific",
+        ]
+        base_price   = random.randint(45_000, 1_20_000)
+        var_price    = random.randint(-5_000, 20_000)
+        dur_min, dur_max = 420, 900         # 7h – 15h
+
+    # ── Build duration string ─────────────────────────────────────
+    duration_mins = random.randint(dur_min, dur_max)
+    duration_str  = f"{duration_mins // 60}h {duration_mins % 60}m"
+
     selected_airline = random.choice(airlines)
-    
-    logger.info(f"Using simulated flight data for {source} → {destination}")
-    
-    result = []
-    result.append(f"FLIGHTS FROM {source.upper()} TO {destination.upper()}")
-    result.append("-" * 60)
-    
-    # Option 1: Direct Flight (simulated)
-    result.append(f"Option 1: {selected_airline} | ₹{base_price:,} | Duration: {duration_str}")
-    
-    # Option 2: Another airline
-    other_airline = random.choice([a for a in airlines if a != selected_airline])
-    result.append(f"Option 2: {other_airline} | ₹{base_price + random.randint(-500, 1500):,} | Duration: {duration_str}")
-    
+    other_airline    = random.choice([a for a in airlines if a != selected_airline])
+
+    logger.info(f"Using simulated {'domestic' if both_domestic else 'international'} "
+                f"flight data for {source} \u2192 {destination}")
+
+    result = [
+        f"FLIGHTS FROM {source.upper()} TO {destination.upper()}",
+        "-" * 60,
+        f"Option 1: {selected_airline} | \u20b9{base_price:,} | Duration: {duration_str}",
+        f"Option 2: {other_airline} | \u20b9{base_price + var_price:,} | Duration: {duration_str}",
+    ]
     return "\n".join(result)

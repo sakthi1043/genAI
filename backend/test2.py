@@ -10,16 +10,18 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-
+from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
+from flight_data import get_flights, get_simulated_flights
 
 # ================= CONFIG =================
 DATA_PATH = "static_rag"
 DB_PATH = "vectordb"
-
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 LLM_TIMEOUT = 60
 EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
@@ -44,9 +46,10 @@ async def lifespan(app: FastAPI):
         logger.info("Loading LLM...")
         state["llm"] = ChatGroq(
             groq_api_key=GROQ_API_KEY,
-            model_name="openai/gpt-oss-20b",
+            model_name="llama-3.3-70b-versatile",
             temperature=0,
             request_timeout=LLM_TIMEOUT,
+            max_tokens=2048,
         )
         logger.info("Models loaded.")
 
@@ -264,16 +267,151 @@ def is_out_of_domain(docs: list[Document], destination: str) -> bool:
 
 
 # ================= JSON EXTRACTOR =================
+def _repair_truncated_json(text: str) -> str:
+    """
+    Attempt to close any unclosed JSON structures produced by a truncated
+    LLM response so that json.loads has a chance of succeeding.
+    """
+    # Track open structures
+    stack = []          # 'obj' or 'arr'
+    in_string = False
+    escape_next = False
+
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            stack.append('obj')
+        elif ch == '[':
+            stack.append('arr')
+        elif ch == '}' and stack and stack[-1] == 'obj':
+            stack.pop()
+        elif ch == ']' and stack and stack[-1] == 'arr':
+            stack.pop()
+
+    # If we are mid-string, close it
+    closer = '"' if in_string else ''
+    # Close every open structure in reverse order
+    for frame in reversed(stack):
+        closer += '}' if frame == 'obj' else ']'
+    return text + closer
+
+
 def extract_json(text: str):
     text = text.strip()
+    # Unwrap ```json ... ``` fences
     fenced = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if fenced:
         text = fenced.group(1).strip()
-    # Find the first { ... } block as a fallback
-    match = re.search(r"\{[\s\S]+\}", text)
+    # Find the outermost { ... } block
+    match = re.search(r"\{[\s\S]+", text)   # intentionally no closing \}
     if match:
         text = match.group(0)
-    return json.loads(text)
+
+    # 1) Try parsing as-is
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2) Try repairing truncated JSON
+    try:
+        repaired = _repair_truncated_json(text)
+        logger.warning("JSON was truncated; repaired and re-parsed successfully.")
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    # 3) Last resort — find the last complete top-level } and cut there
+    last_brace = text.rfind('}')
+    if last_brace != -1:
+        try:
+            candidate = text[:last_brace + 1]
+            result = json.loads(candidate)
+            logger.warning("JSON repaired by truncating to last '}'.")
+            return result
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError("Could not parse or repair JSON from LLM response.")
+
+
+# ================= BUDGET HELPERS =================
+
+# Minimum per-person-per-day thresholds (INR)
+_DOMESTIC_MIN_PER_PERSON_DAY  = 500    # very budget domestic India
+_INTL_MIN_PER_PERSON_DAY      = 3_000  # budget international (flight not included)
+
+# Known international country keywords (extend as needed)
+_INTL_KEYWORDS = {
+    "japan", "usa", "uk", "france", "germany", "italy", "spain", "australia",
+    "singapore", "thailand", "bali", "dubai", "uae", "canada", "malaysia",
+    "maldives", "switzerland", "new zealand", "south korea", "china",
+    "indonesia", "vietnam", "sri lanka", "nepal", "bhutan", "egypt", "turkey",
+}
+
+def _is_international(destination: str) -> bool:
+    d = destination.lower()
+    return any(kw in d for kw in _INTL_KEYWORDS)
+
+
+def budget_validate(destination: str, budget: int, days: int, travelers: int) -> dict | None:
+    """
+    Returns an error dict if budget is too low, else None.
+    """
+    per_person_per_day = budget / max(travelers, 1) / max(days, 1)
+    is_intl = _is_international(destination)
+    min_ppd = _INTL_MIN_PER_PERSON_DAY if is_intl else _DOMESTIC_MIN_PER_PERSON_DAY
+    min_total = min_ppd * travelers * days
+
+    if per_person_per_day < min_ppd:
+        trip_type = "international" if is_intl else "domestic"
+        return {
+            "error": (
+                f"Budget \u20b9{budget:,} is too low for a {days}-day {trip_type} trip "
+                f"to {destination} for {travelers} traveler(s). "
+                f"Minimum recommended budget is \u20b9{min_total:,} "
+                f"(\u20b9{min_ppd:,}/person/day)."
+            )
+        }
+    return None
+
+
+def budget_allocate(budget: int, days: int, travelers: int) -> dict:
+    """
+    Split total budget across stay, food, activities, transport.
+    Standard travel allocation:
+      Stay        40 %
+      Food        25 %
+      Activities  20 %
+      Transport   15 %
+    Returns per-night / per-day / per-trip values.
+    """
+    stay_total       = int(budget * 0.40)
+    food_total       = int(budget * 0.25)
+    activity_total   = int(budget * 0.20)
+    transport_total  = int(budget * 0.15)
+
+    nights = max(days, 1)
+    return {
+        "stay_per_night_inr":      stay_total // nights,
+        "food_per_day_inr":        food_total // max(days, 1),
+        "activity_per_day_inr":    activity_total // max(days, 1),
+        "transport_per_day_inr":   transport_total // max(days, 1),
+        "stay_total_inr":          stay_total,
+        "food_total_inr":          food_total,
+        "activity_total_inr":      activity_total,
+        "transport_total_inr":     transport_total,
+    }
 
 
 # ================= GENERATE =================
@@ -286,48 +424,198 @@ def _sync_generate(source, destination, budget, days, food, travelers):
     if llm is None:
         return {"error": "LLM not loaded. Check server startup logs."}
 
-    # Retrieve with multiple targeted queries and merge results
-    retriever = db.as_retriever(search_kwargs={"k": 8})
-    docs = retriever.invoke(destination)
+    # ---- 1. Get flight cost first (needed for budget validation) ----
+    try:
+        flight_raw = get_simulated_flights(source, destination)
+        import os
+        if os.getenv("RAPID_API_KEY"):
+            try:
+                flight_raw = get_flights.invoke({"source": source, "destination": destination})
+            except Exception as fe:
+                logger.warning(f"Real flight API failed, using simulated: {fe}")
+    except Exception as e:
+        logger.warning(f"Flight lookup failed entirely: {e}")
+        flight_raw = f"FLIGHTS FROM {source.upper()} TO {destination.upper()}\nEstimated cost: \u20b93,500 \u2013 \u20b98,500 per person"
 
+    # Parse flight text into a structured dict
+    travel_info = {"from": source, "to": destination, "options": []}
+    for line in flight_raw.splitlines():
+        line = line.strip()
+        if line.startswith("Option"):
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 3:
+                airline    = parts[0].split(":", 1)[-1].strip()
+                price_str  = parts[1].replace("\u20b9", "").replace(",", "").strip()
+                try:
+                    price_inr = int(price_str)
+                except ValueError:
+                    price_inr = 0
+                duration = parts[2].replace("Duration:", "").strip()
+                travel_info["options"].append({
+                    "airline": airline,
+                    "price_per_person_inr": price_inr,
+                    "total_price_inr": price_inr * travelers,
+                    "duration": duration,
+                })
+
+    if travel_info["options"]:
+        cheapest        = min(travel_info["options"], key=lambda x: x["price_per_person_inr"])
+        travel_cost_inr = cheapest["total_price_inr"]
+        travel_note     = (
+            f"{source} \u2192 {destination}: {cheapest['airline']}, "
+            f"\u20b9{cheapest['price_per_person_inr']:,}/person, "
+            f"Duration: {cheapest['duration']}"
+        )
+    else:
+        travel_cost_inr = 0
+        travel_note     = f"Estimate travel cost from {source} to {destination} separately."
+
+    logger.info(f"Travel info: {travel_note}")
+
+    # ---- 2. Budget validation against remaining (ground) budget ----
+    if travel_cost_inr >= budget:
+        return {
+            "error": (
+                f"Your budget \u20b9{budget:,} is insufficient to cover even the flight. "
+                f"Cheapest flight ({cheapest['airline']}) costs "
+                f"\u20b9{cheapest['price_per_person_inr']:,}/person "
+                f"(\u20b9{travel_cost_inr:,} total for {travelers} traveler(s)). "
+                f"Please increase your budget."
+            )
+        }
+
+    ground_budget = budget - travel_cost_inr   # what's left after flights
+    budget_error  = budget_validate(destination, ground_budget, days, travelers)
+    if budget_error:
+        # Enrich the error to mention flight cost ate into budget
+        base_msg = budget_error["error"]
+        return {
+            "error": (
+                f"{base_msg} "
+                f"Note: \u20b9{travel_cost_inr:,} of your budget is used for flights "
+                f"({cheapest['airline'] if travel_info['options'] else 'flights'}), "
+                f"leaving \u20b9{ground_budget:,} for the trip."
+            )
+        }
+
+    # ---- 3. Allocate from ground budget (stay + food + activities + transport) ----
+    alloc              = budget_allocate(ground_budget, days, travelers)
+    per_day_per_person = ground_budget // max(travelers, 1) // max(days, 1)
+
+    logger.info(
+        f"Budget split — total:\u20b9{budget:,} flight:\u20b9{travel_cost_inr:,} "
+        f"ground:\u20b9{ground_budget:,} ({per_day_per_person:,}/person/day)"
+    )
+
+
+
+    # ---- 3. RAG retrieval ----
+    retriever = db.as_retriever(search_kwargs={"k": 6})
+
+    # Check source city exists in DB
+    source_docs = retriever.invoke(source)
+    if not source_docs or is_out_of_domain(source_docs, source):
+        logger.warning(f"Source '{source}' not found in DB.")
+        return {"error": f"Source '{source}' not found in our database. Please enter a valid departure city."}
+
+    # Check destination exists in DB
+    docs = retriever.invoke(destination)
     if not docs or is_out_of_domain(docs, destination):
         logger.warning(f"'{destination}' not found in DB.")
         return {"error": f"Destination '{destination}' not found in our database."}
 
-    # Build clean context — deduplicate and focus on destination match
-    seen = set()
-    context_parts = []
-    for d in docs:
-        content = d.page_content.strip()
-        if content not in seen:
-            seen.add(content)
-            context_parts.append(content)
+    # ---- 4. Build full destination context from retrieved docs ----
+    seen_docs: set = set()
+    full_context_parts = []
+    for doc in docs:
+        content = doc.page_content.strip()
+        if content not in seen_docs:
+            seen_docs.add(content)
+            full_context_parts.append(content)
+    full_context = "\n\n---\n\n".join(full_context_parts)
 
-    context = "\n\n---\n\n".join(context_parts)
+    # ---- 5. Extract cost hints from context ----
+    def _extract_lines(doc_list: list, keyword: str) -> str:
+        seen: set = set()
+        results = []
+        for doc in doc_list:
+            for line in doc.page_content.splitlines():
+                s = line.strip()
+                if keyword.lower() in s.lower() and s not in seen:
+                    seen.add(s)
+                    results.append(s)
+        return "\n".join(results)
 
-    per_day_per_person = budget // max(travelers, 1) // max(days, 1)
+    accom_hint    = _extract_lines(docs, "accommodation") or "Use world-knowledge hotel costs."
+    food_hint     = _extract_lines(docs, "food")          or "Use world-knowledge food costs."
+    transport_hint= _extract_lines(docs, "transport")     or "Use world-knowledge transport costs."
+    activity_hint = _extract_lines(docs, "activit")       or "Use world-knowledge for activities."
 
-    prompt = f"""You are a travel planner. Generate a {days}-day itinerary from {source} to {destination}.
+    logger.info(f"Full context built: {len(full_context_parts)} docs for {destination}")
+
+    rag_section = f"""=== DESTINATION REFERENCE DATA ===
+{full_context}
+
+=== COST HINTS FROM DATABASE ===
+Accommodation: {accom_hint}
+Food: {food_hint}
+Transport: {transport_hint}
+Activities: {activity_hint}"""
+
+    prompt = f"""You are an expert travel planner with deep knowledge of {destination}.
+Generate a detailed, SPECIFIC {days}-day itinerary from {source} to {destination}.
 
 === TRAVELER DETAILS ===
 - Travelers: {travelers}
-- Total Budget: ₹{budget:,} INR
-- Per person per day budget: ₹{per_day_per_person:,} INR
+- Total Budget: \u20b9{budget:,} INR
+- Per person per day: \u20b9{per_day_per_person:,} INR
 - Food preference: {food}
 - Duration: {days} days
 
-=== DESTINATION DATA (USE THIS ONLY — DO NOT INVENT) ===
-{context}
+=== APPROVED BUDGET ALLOCATION ===
+- Stay:       \u20b9{alloc['stay_per_night_inr']:,}/night  (total \u20b9{alloc['stay_total_inr']:,})
+- Food:       \u20b9{alloc['food_per_day_inr']:,}/day     (total \u20b9{alloc['food_total_inr']:,})
+- Activities: \u20b9{alloc['activity_per_day_inr']:,}/day  (total \u20b9{alloc['activity_total_inr']:,})
+- Transport:  \u20b9{alloc['transport_per_day_inr']:,}/day (total \u20b9{alloc['transport_total_inr']:,})
+
+{rag_section}
 
 === YOUR TASK ===
-Using ONLY the data above, generate a realistic day-by-day itinerary.
-- Activities must come from the "Suggested Activities" or "Type" fields in the data
-- Food options must match the food preference "{food}" and reference local cuisine from the data
-- Stay must reference accommodation options mentioned in the data with a realistic cost within ₹{per_day_per_person:,}/person/day
-- Transport must reference transport options mentioned in the data
-- Each day must be distinct — do not repeat the same activity
+Create a SPECIFIC, REALISTIC itinerary using the reference data above.
+If the database has details, use them. Where the database is generic, use your world knowledge.
 
-OUTPUT: Return ONLY a valid JSON object. No markdown. No explanation. No extra text.
+STRICT SPECIFICITY RULES — every field must be REAL and SPECIFIC:
+
+ACTIVITIES (MUST be specific real places):
+- Use actual landmark names: e.g. "Visit Calangute Beach", "Explore Basilica of Bom Jesus", NOT "Beach Visit"
+- Use real tourist spots, museums, markets, temples with their actual names
+- Each day MUST have a completely different theme and 3 distinct activities
+- Use the cost hint from database; if 0, estimate a realistic cost from world knowledge
+
+FOOD (MUST be specific dishes and real eateries):
+- Use real local dish names: e.g. "Goan Fish Curry at Ritz Classic", NOT "local lunch"
+- Breakfast, Lunch, Dinner must each be a specific {food} dish with a real restaurant name
+- Match "{food}" preference throughout
+- Use database food cost hints; if missing, estimate from world knowledge
+
+STAY (MUST be a real hotel name):
+- Use an ACTUAL hotel/resort/guesthouse name that fits \u20b9{alloc['stay_per_night_inr']:,}/night budget
+- Include hotel type (Budget/Mid-range/Luxury) based on the budget
+- Use database accommodation cost hints to set cost_per_night_inr
+- Keep the SAME hotel for all days (realistic for a short trip) unless budget changes
+
+TRANSPORT (MUST be specific):
+- Use real transport options for {destination}: e.g. "Hired scooter rental", "Kadamba bus", NOT "local transport"
+- Vary transport per day where realistic
+
+GENERAL RULES:
+- Keep ALL string values under 60 characters
+- cost_inr values MUST match the APPROVED BUDGET ALLOCATION — do not exceed them
+- tips: EXACTLY 3 strings, each a SPECIFIC practical tip for {destination} (best time, must-eat, etc.)
+- Each of the {days} days MUST have a unique theme
+
+OUTPUT: Return ONLY a valid, COMPLETE JSON object. No markdown, no explanation.
+Every opening brace/bracket MUST have a matching closing brace/bracket.
 
 {{
   "destination": "{destination}",
@@ -337,34 +625,58 @@ OUTPUT: Return ONLY a valid JSON object. No markdown. No explanation. No extra t
   "trip_plan": [
     {{
       "day": 1,
-      "theme": "short theme for the day",
+      "theme": "SPECIFIC theme (e.g. Old Goa Heritage)",
       "activities": [
-        {{"time": "Morning", "activity": "specific activity from data", "cost_inr": 0}},
-        {{"time": "Afternoon", "activity": "specific activity from data", "cost_inr": 0}},
-        {{"time": "Evening", "activity": "specific activity from data", "cost_inr": 0}}
+        {{"time": "Morning",   "activity": "SPECIFIC real place/activity", "cost_inr": {alloc['activity_per_day_inr'] // 3}}},
+        {{"time": "Afternoon", "activity": "SPECIFIC real place/activity", "cost_inr": {alloc['activity_per_day_inr'] // 3}}},
+        {{"time": "Evening",   "activity": "SPECIFIC real place/activity", "cost_inr": {alloc['activity_per_day_inr'] // 3}}}
       ],
       "food": [
-        {{"meal": "Breakfast", "description": "{food} option at local eatery", "cost_inr": 0}},
-        {{"meal": "Lunch", "description": "{food} dish from local cuisine", "cost_inr": 0}},
-        {{"meal": "Dinner", "description": "{food} dinner at restaurant", "cost_inr": 0}}
+        {{"meal": "Breakfast", "description": "SPECIFIC dish at REAL restaurant", "cost_inr": {alloc['food_per_day_inr'] // 4}}},
+        {{"meal": "Lunch",     "description": "SPECIFIC dish at REAL restaurant", "cost_inr": {alloc['food_per_day_inr'] // 3}}},
+        {{"meal": "Dinner",    "description": "SPECIFIC dish at REAL restaurant", "cost_inr": {alloc['food_per_day_inr'] // 3}}}
       ],
-      "stay": {{"name": "accommodation from data", "type": "Budget/Mid-range/Luxury", "cost_per_night_inr": 0}},
-      "transport": {{"mode": "transport from data", "cost_inr": 0}},
-      "day_total_inr": 0
+      "stay":      {{"name": "REAL hotel name", "type": "Budget/Mid-range/Luxury", "cost_per_night_inr": {alloc['stay_per_night_inr']}}},
+      "transport": {{"mode": "SPECIFIC transport mode", "cost_inr": {alloc['transport_per_day_inr']}}},
+      "day_total_inr": {per_day_per_person * travelers}
     }}
   ],
-  "tips": ["tip based on best time to visit from data", "tip about local cuisine", "tip about transport"]
+  "tips": ["SPECIFIC tip 1 for {destination}", "SPECIFIC tip 2", "SPECIFIC tip 3"]
 }}"""
 
     response = llm.invoke(prompt)
-    logger.info(f"LLM raw response (first 300 chars): {response.content[:300]}")
+    raw = response.content.strip() if response.content else ""
+    logger.info(f"LLM raw response (first 300 chars): {raw[:300]}")
+
+    # Guard 1: empty response
+    if not raw:
+        logger.error("LLM returned an empty response.")
+        return {"error": "The AI returned an empty response. Please try again."}
+
+    # Guard 2: refusal / apology (model declined to generate)
+    REFUSAL_PHRASES = [
+        "i'm sorry", "i am sorry", "i cannot", "i can't",
+        "unable to", "not able to", "cannot generate", "can't generate",
+        "unfortunately", "as an ai",
+    ]
+    raw_lower = raw.lower()
+    if any(phrase in raw_lower for phrase in REFUSAL_PHRASES) and "{" not in raw:
+        logger.error(f"LLM refused to generate itinerary: {raw[:200]}")
+        return {"error": f"The AI declined this request: {raw[:200]}"}
+
+    # Guard 3: response doesn't look like JSON at all
+    if "{" not in raw:
+        logger.error(f"LLM did not return JSON. Response: {raw[:200]}")
+        return {"error": "The AI did not return a valid itinerary. Please try again."}
 
     try:
-        result = extract_json(response.content)
+        result = extract_json(raw)
+        # Inject the pre-computed travel info so it's always valid JSON
+        result["travel"] = travel_info
         return result
     except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"JSON parse error: {e}\nFull response: {response.content}")
-        return {"error": "Failed to parse LLM response as JSON", "raw": response.content}
+        logger.error(f"JSON parse error: {e}\nFull response: {raw}")
+        return {"error": "Failed to parse the AI response. Please try again.", "raw": raw}
 
 
 # ================= ROUTES =================

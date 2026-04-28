@@ -26,4 +26,4 @@ requests
 
 pydantic
 
-pip install fastapi uvicorn chromadb langchain langchain-community langchain-huggingface langchain-groq sentence-transformers pypdf
+# pip install fastapi uvicorn chromadb langchain langchain-community langchain-huggingface langchain-groq sentence-transformers pypdf
