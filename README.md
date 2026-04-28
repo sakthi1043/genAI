@@ -1,310 +1,329 @@
-# Travel Planner AI Assistant
+# ✈️ Travel Itinerary Planner — AI-Powered
 
-An intelligent travel planning application that generates personalized itineraries with specific recommendations for accommodations, attractions, restaurants, and flights. This project combines AI-powered planning with a knowledge base of travel data to provide comprehensive travel suggestions.
+A full-stack travel planning application that generates **specific, realistic day-by-day itineraries** using RAG (Retrieval-Augmented Generation) with a Groq-hosted LLM. The backend validates source/destination against a vector database, estimates flight costs, allocates budgets across all trip components, and falls back to LLM world knowledge when RAG data is sparse.
+
+---
 
 ## 🎯 Features
 
-- **AI-Powered Itinerary Generation**: Creates detailed day-by-day travel plans with specific times and activities
-- **Smart Budget Management**: Allocates daily budgets across activities, food, accommodation, and transportation
-- **Specific Recommendations**: Provides real place names, restaurant recommendations, and hotel options with ratings and prices
-- **Multi-Source Information**: Integrates vector databases, Wikipedia, and specialized travel data
-- **Flight Search**: Real-time flight information and pricing
-- **Accommodation Search**: Find hotels with amenities, ratings, and costs
-- **Attraction Discovery**: Get specific attractions based on interests
-- **Restaurant Recommendations**: Cuisine and cost-aware dining suggestions
-- **Travel Tips**: Weather, climate, and practical travel advice
-- **Chat-Based Refinement**: Ask follow-up questions to refine your itinerary
-- **Session Management**: Maintains conversation history for personalized recommendations
+| Feature | Details |
+|---|---|
+| **Itinerary Generation** | Day-by-day plan with real place names, hotels, restaurants, and activities |
+| **RAG + World Knowledge** | Tries vector DB first; falls back to LLM knowledge automatically per component |
+| **Smart Budget Allocation** | Splits budget: Stay 40%, Food 25%, Activities 20%, Transport 15% |
+| **Flight Cost Lookup** | Real Sky-Scrapper API → realistic simulated fallback (domestic / neighbour / international) |
+| **Budget Awareness** | Flight cost subtracted first; remaining "ground budget" drives all allocations |
+| **Input Validation** | Source and destination checked against DB; budget validated with minimum thresholds |
+| **JSON Repair** | 3-tier repair strategy for truncated LLM responses |
+| **Chat Refinement** | Follow-up questions via `/chat` endpoint with session memory |
+
+---
 
 ## 🏗️ Project Structure
 
 ```
-.
-├── backend/                          # FastAPI backend service
-│   ├── main.py                      # FastAPI application entry point
-│   ├── agent.py                     # AI agent with LangGraph integration
-│   ├── accommodation_tools.py       # Search tools for hotels, attractions, restaurants, tips
-│   ├── flight_data.py               # Flight search functionality
-│   ├── hybrid_rag.py                # Combined vector DB + Wikipedia search
-│   ├── vector_tools.py              # Chroma vector database queries
-│   ├── memory.py                    # Session management and conversation history
-│   ├── ingest.py                    # Data ingestion pipeline
-│   ├── requirements.txt             # Python dependencies
-│   ├── .env                         # Environment variables (API keys)
-│   └── data/
-│       └── static_rag/              # Travel data CSV files
-│           ├── Expanded_Destinations.csv
-│           ├── India_Tourism_2025_Processed.csv
-│           ├── Tourist_Destinations.csv
-│           ├── trending_topics_2026_synthetic.csv
-│           └── Worldwide Travel Cities Dataset (Ratings and Climate).csv
+genAI/
+├── backend/
+│   ├── test2.py              # Main FastAPI app — all backend logic
+│   ├── flight_data.py        # Flight lookup (RapidAPI) + realistic simulator
+│   ├── static_rag/           # Travel data CSV files
+│   │   ├── Expanded_Destinations.csv
+│   │   ├── India_Tourism_2025_Processed.csv
+│   │   ├── Tourist_Destinations.csv
+│   │   └── Worldwide_Travel_Cities_Dataset__Ratings_and_Climate_.csv
+│   ├── vectordb/             # ChromaDB persistent vector store (auto-created)
+│   ├── requirements.txt
+│   └── .env                  # API keys
 │
-├── frontend/                         # React + Vite frontend application
-│   ├── src/
-│   │   ├── App.jsx                  # Main application component with chat interface
-│   │   ├── api.js                   # API client for backend communication
-│   │   ├── main.jsx                 # React entry point
-│   │   ├── components/
-│   │   │   └── Form.jsx             # Travel request form component
-│   │   └── styles files
-│   ├── package.json                 # Node.js dependencies
-│   ├── vite.config.js              # Vite configuration
-│   └── index.html
-│
-└── vector_db/                        # Chroma vector database storage
-    └── travel_data/
-        └── chroma.sqlite3           # Persistent vector embeddings
-
+└── frontend/
+    └── src/
+        └── App.jsx           # React UI — form, itinerary display, chat
 ```
+
+---
 
 ## 💻 Tech Stack
 
 ### Backend
-- **FastAPI**: Modern Python web framework for building APIs
-- **LangChain**: LLM orchestration and tool integration
-- **LangGraph**: Agentic workflow framework for multi-step reasoning
-- **Groq API**: High-speed LLM inference (GPT-OSS-120B model)
-- **Chroma**: Vector database for semantic search and RAG
-- **Sentence Transformers**: Embedding generation for text similarity
-- **Pandas & NumPy**: Data processing and analysis
-- **Wikipedia API**: External knowledge source
-- **DuckDuckGo Search**: Web search integration
+| Component | Technology |
+|---|---|
+| Web framework | **FastAPI** |
+| LLM | **Groq** — `llama-3.3-70b-versatile` (temperature 0, max_tokens 2048) |
+| Embeddings | **HuggingFace** — `sentence-transformers/all-MiniLM-L6-v2` |
+| Vector DB | **ChromaDB** (persistent, local) |
+| RAG orchestration | **LangChain** (`langchain_chroma`, `langchain_groq`, `langchain_huggingface`) |
+| Flight data | **Sky-Scrapper RapidAPI** + built-in simulated fallback |
+| Data processing | **Pandas** |
 
 ### Frontend
-- **React 19**: Modern UI framework
-- **Vite**: Fast build tool and development server
-- **Axios**: HTTP client for API requests
-- **ESLint**: Code quality and linting
+| Component | Technology |
+|---|---|
+| Framework | **React 19 + Vite** |
+| HTTP client | **Axios** |
+| Styling | Vanilla CSS (inline styles in `App.jsx`) |
 
-### Infrastructure
-- **CORS Middleware**: Cross-origin resource sharing setup for frontend-backend communication
-- **Pydantic**: Data validation using Python type hints
+---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.8+
-- Node.js 16+ and npm
-- Groq API key ([Get one here](https://console.groq.com/keys))
-- Git
+- Python 3.10+
+- Node.js 18+ and npm
+- [Groq API key](https://console.groq.com/keys)
 
 ### Backend Setup
 
-1. **Navigate to backend directory**
-   ```bash
-   cd backend
-   ```
+```bash
+# 1. Navigate to backend
+cd backend
 
-2. **Create Python virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/Scripts/activate  # Windows
-   # or
-   source venv/bin/activate      # macOS/Linux
-   ```
+# 2. Create and activate virtual environment
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+# 3. Install dependencies
+pip install -r requirements.txt
 
-4. **Set up environment variables**
-   Create a `.env` file in the `backend/` directory:
-   ```env
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
+# 4. Create .env file
+echo GROQ_API_KEY=your_key_here > .env
+# Optional: add RAPID_API_KEY=your_rapidapi_key for real flight data
 
-5. **Initialize vector database (first run only)**
-   ```bash
-   python backend/ingest.py
-   ```
-   This processes CSV data and creates vector embeddings in the Chroma database.
+# 5. Start the server
+uvicorn test2:app --reload
+```
 
-6. **Start backend server**
-   ```bash
-   uvicorn backend.main:app --reload --port 8000
-   ```
-   Backend will be available at `http://localhost:8000`
+Backend runs at `http://localhost:8000`.
+
+The vector DB (`vectordb/`) is built automatically on the first `POST /init-db` call. You can also trigger it via the UI or curl:
+
+```bash
+curl -X POST http://localhost:8000/init-db
+```
 
 ### Frontend Setup
 
-1. **Navigate to frontend directory**
-   ```bash
-   cd frontend
-   ```
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+Frontend runs at `http://localhost:5173`.
 
-3. **Start development server**
-   ```bash
-   npm run dev
-   ```
-   Frontend will be available at `http://localhost:5173`
+---
 
 ## 📡 API Reference
 
-### POST `/generate`
-Generate a travel itinerary based on user preferences.
+### `POST /init-db`
+Builds the ChromaDB vector store from the CSVs in `static_rag/`. Call once before generating itineraries. Safe to call again to rebuild.
 
-**Request Body:**
+**Response:**
+```json
+{ "status": "success", "documents": 1248 }
+```
+
+---
+
+### `POST /generate`
+Generates a complete travel itinerary.
+
+**Request:**
 ```json
 {
   "source": "Mumbai",
   "destination": "Goa",
-  "budget": 50000,
-  "days": 5,
-  "food": "vegetarian",
+  "budget": 25000,
+  "days": 3,
+  "food": "non-vegetarian",
   "travelers": 2
 }
 ```
 
-**Parameters:**
-- `source` (string): Starting city
-- `destination` (string): Target city
-- `budget` (integer): Total budget in rupees
-- `days` (integer): Number of days for the trip
-- `food` (string): Food preference (e.g., "vegetarian", "non-vegetarian", "vegan")
-- `travelers` (integer): Number of travelers
-
 **Response:**
 ```json
 {
-  "plan": "Day 1:\n  Morning: Arrive at Goa...\n  [detailed itinerary with specific places, prices, and times]"
-}
-```
-
-### POST `/chat`
-Send follow-up questions about an existing itinerary or get refinements.
-
-**Request Body:**
-```json
-{
-  "message": "Can you suggest cheaper restaurants?",
-  "session_id": "default"
-}
-```
-
-**Parameters:**
-- `message` (string): Chat message or question
-- `session_id` (string): Session identifier for maintaining context (default: "default")
-
-**Response:**
-```json
-{
-  "response": "Based on your budget constraints, here are some budget-friendly options...",
+  "plan": {
+    "destination": "Goa",
+    "duration_days": 3,
+    "total_budget_inr": 25000,
+    "travelers": 2,
+    "travel": {
+      "from": "Mumbai",
+      "to": "Goa",
+      "options": [
+        {
+          "airline": "IndiGo",
+          "price_per_person_inr": 4200,
+          "total_price_inr": 8400,
+          "duration": "1h 20m"
+        }
+      ]
+    },
+    "trip_plan": [
+      {
+        "day": 1,
+        "theme": "Old Goa Heritage",
+        "activities": [
+          { "time": "Morning",   "activity": "Visit Basilica of Bom Jesus", "cost_inr": 0 },
+          { "time": "Afternoon", "activity": "Se Cathedral & Goa Museum",   "cost_inr": 50 },
+          { "time": "Evening",   "activity": "Sunset at Fort Aguada",       "cost_inr": 0 }
+        ],
+        "food": [
+          { "meal": "Breakfast", "description": "Poie bread & chai at Café Bhonsle", "cost_inr": 120 },
+          { "meal": "Lunch",     "description": "Goan Fish Curry at Ritz Classic",   "cost_inr": 350 },
+          { "meal": "Dinner",    "description": "Prawn balchão at Viva Panjim",      "cost_inr": 600 }
+        ],
+        "stay": {
+          "name": "Old Quarter Inn",
+          "type": "Budget",
+          "cost_per_night_inr": 1400
+        },
+        "transport": {
+          "mode": "Hired scooter rental",
+          "cost_inr": 400
+        },
+        "day_total_inr": 2920
+      }
+    ],
+    "tips": [
+      "Visit beaches early morning to avoid crowds",
+      "Carry cash — many shacks don't accept cards",
+      "Oct–Feb is the best time; avoid monsoon (Jun–Sep)"
+    ]
+  },
   "error": false
 }
 ```
 
-## 🔧 Core Components
+---
 
-### Agent (`agent.py`)
-- Uses LangGraph's ReAct agent pattern for step-by-step reasoning
-- Integrates multiple tools for gathering travel information
-- Maintains conversation context using session management
-- Uses Groq's optimized LLM for fast response generation
+### `POST /chat`
+Ask follow-up questions about an existing itinerary.
 
-### Search Tools (`accommodation_tools.py`)
-- **search_accommodations()**: Finds hotels with amenities and pricing
-- **search_attractions()**: Discovers attractions by type and interest
-- **search_food_restaurants()**: Recommends restaurants with cuisine and cost info
-- **search_travel_tips()**: Provides weather, climate, and practical travel advice
+**Request:**
+```json
+{
+  "message": "Can you suggest budget accommodation in Goa?",
+  "session_id": "abc123"
+}
+```
 
-### Vector Database (`vector_tools.py`)
-- Semantic search over travel knowledge base
-- Integration with Chroma for fast similarity queries
-- Powered by Sentence Transformers embeddings
+**Response:**
+```json
+{
+  "response": "For budget stays in Goa under ₹1,500/night, consider...",
+  "error": false
+}
+```
 
-### Hybrid Search (`hybrid_rag.py`)
-- Combines local vector database results with Wikipedia information
-- Provides comprehensive travel context and facts
+---
 
-### Memory Management (`memory.py`)
-- Session-based conversation history
-- Maintains context across multiple queries
-- Enables personalized follow-up responses
+## 🔄 Request Processing Pipeline
 
-## 📊 Data Sources
+```
+User Input (source, destination, budget, days, food, travelers)
+         │
+         ▼
+① Source validation  ── not in DB → error "Source not found in our database"
+         │
+         ▼
+② Flight cost lookup
+    ├─ RapidAPI (if RAPID_API_KEY set)
+    └─ Simulated fallback:
+         Domestic India     → ₹3,500–₹9,500  | IndiGo, SpiceJet, Vistara...
+         Neighbour country  → ₹12,000–₹35,000 | SriLankan, Maldivian...
+         International      → ₹45,000–₹1,20,000 | Emirates, Qatar, Air France...
+         │
+         ▼
+③ Budget validation (on ground budget = total − flight cost)
+    ├─ Domestic minimum: ₹500/person/day
+    └─ International minimum: ₹3,000/person/day
+         │
+         ▼
+④ Budget allocation (from ground budget only)
+    ├─ Stay:        40%
+    ├─ Food:        25%
+    ├─ Activities:  20%
+    └─ Transport:   15%
+         │
+         ▼
+⑤ Destination validation ── not in DB → error "Destination not found"
+         │
+         ▼
+⑥ RAG retrieval (ChromaDB, k=6)
+    ├─ Full destination document passed as context
+    └─ Cost hints extracted per component (accommodation, food, transport, activities)
+         │
+         ▼
+⑦ LLM generation (llama-3.3-70b-versatile via Groq)
+    ├─ Uses RAG data for cost ranges
+    ├─ Uses world knowledge for specific names (hotels, restaurants, landmarks)
+    └─ JSON schema pre-seeded with correct budget values
+         │
+         ▼
+⑧ JSON extraction + repair (3-tier)
+    ├─ Tier 1: Parse raw response
+    ├─ Tier 2: Repair truncated JSON (close open braces/brackets/strings)
+    └─ Tier 3: Truncate to last complete `}`
+         │
+         ▼
+⑨ Travel info injected into result (always valid — never passed through LLM)
+         │
+         ▼
+Response returned to frontend
+```
 
-The project includes several CSV datasets for travel information:
-- **India_Tourism_2025_Processed.csv**: Indian destination data
-- **Expanded_Destinations.csv**: Extended destination information
-- **Tourist_Destinations.csv**: Popular tourist spots
-- **Worldwide Travel Cities Dataset**: Global city ratings and climate data
-- **trending_topics_2026_synthetic.csv**: Trending travel topics
+---
 
-## 🎨 User Interface
+## 📊 Data Sources (CSVs in `static_rag/`)
 
-The frontend provides:
-- **Travel Request Form**: Easy form to specify trip preferences
-- **Quick Trip Suggestions**: Pre-configured popular routes
-- **Chat Interface**: Conversational refinement of itineraries
-- **Typing Indicators**: Visual feedback during processing
-- **Responsive Design**: Works on desktop and mobile devices
+| File | Contents |
+|---|---|
+| `Expanded_Destinations.csv` | Indian destinations — name, state, type, popularity, best time |
+| `India_Tourism_2025_Processed.csv` | State-level tourism revenue, visitor counts, visit purposes |
+| `Tourist_Destinations.csv` | International destinations — country, cost/day (USD), season, rating |
+| `Worldwide_Travel_Cities_Dataset_*.csv` | Global city scores — culture, adventure, nature, beaches, nightlife, cuisine |
 
-## 🔄 Workflow
+Each CSV row is enriched into a single **LangChain `Document`** that combines all available fields, then embedded and stored in ChromaDB.
 
-1. User fills out travel form with source, destination, budget, duration, preferences
-2. Frontend sends request to `/generate` endpoint
-3. Backend agent processes request:
-   - Searches vector database for destination information
-   - Queries accommodation, attraction, and restaurant data
-   - Retrieves flight information
-   - Generates detailed day-by-day itinerary with budget breakdown
-4. Frontend displays itinerary with typing animation
-5. User can ask follow-up questions via chat interface
-6. Agent refines recommendations based on conversation history
-
-## 💡 Tips for Best Results
-
-- Be specific with preferences (vegetarian, adventure sports, luxury, budget, etc.)
-- Longer trips (5+ days) allow for better multi-city recommendations
-- Mention traveler count for accurate per-person budget allocation
-- Use follow-up chat to refine specific days or activities
-- Ask for alternatives if you need budget options
+---
 
 ## 🐛 Troubleshooting
 
-**Backend won't start:**
-- Ensure GROQ_API_KEY is set in `.env`
-- Check if port 8000 is available
-- Verify all Python dependencies are installed
+| Problem | Fix |
+|---|---|
+| `Vector DB not initialised` | `POST http://localhost:8000/init-db` |
+| `Source/Destination not found` | Only cities present in the CSV data are validated; try common city names |
+| `Budget too low` | Domestic: ₹500/person/day minimum after flights; International: ₹3,000/person/day |
+| `LLM returned empty response` | Retry; or check `GROQ_API_KEY` in `.env` |
+| `Failed to parse AI response` | LLM output was too large; reduce `days` or try again |
+| Real flights not showing | Set `RAPID_API_KEY` in `.env`; simulated data is used as fallback |
 
-**Vector database errors:**
-- Run `python backend/ingest.py` to regenerate embeddings
-- Check if `vector_db/` directory exists and is writable
+---
 
-**Frontend connection issues:**
-- Verify backend is running on `http://localhost:8000`
-- Check browser console for CORS errors
-- Ensure `.env` is properly configured
+## 🔑 Environment Variables
 
-**Poor itinerary quality:**
-- Try different keywords in follow-up questions
-- Ask for specific activity types or interests
-- Request budget breakdowns for detailed cost analysis
+```env
+# backend/.env
 
-## 📝 Future Enhancements
+GROQ_API_KEY=gsk_...          # Required — Groq LLM inference
+RAPID_API_KEY=...             # Optional — real flight data via Sky-Scrapper
+```
 
-- Real-time API integration for flight bookings
-- Hotel reservation integration
-- Weather API integration for accurate forecasts
-- Multi-language support
-- Social sharing of itineraries
-- User accounts and saved trips
-- Mobile app (React Native)
-- Advanced filtering options (carbon footprint, accessibility)
+---
+
+## 📝 Notes
+
+- The vector DB persists in `backend/vectordb/`. Delete this folder and re-call `/init-db` to rebuild from updated CSVs.
+- LLM timeout is set to **60 seconds** (`LLM_TIMEOUT` in `test2.py`). Increase for slow connections.
+- The LLM is instructed to use **real, specific names** for hotels, restaurants, and landmarks. Quality improves when the destination is well-represented in the CSV data.
+
+---
 
 ## 📄 License
 
-This project is open source and available under the MIT License.
-
-## 👨‍💼 Author
-
-Created as a Mini Project showcasing AI-powered travel planning with LangChain, LangGraph, and modern GenAI capabilities.
+Open source — MIT License.
 
 ---
 
